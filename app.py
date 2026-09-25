@@ -1,4 +1,4 @@
-﻿import json
+import json
 import os
 from pathlib import Path
 
@@ -20,27 +20,49 @@ CLASSES_PATH = BASE_DIR / "model" / "classes.json"
 
 
 # ============================================================
+# Pre-computed constants for image normalization
+# ============================================================
+
+MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32).reshape(1, 3, 1, 1)
+STD = np.array([0.229, 0.224, 0.225], dtype=np.float32).reshape(1, 3, 1, 1)
+
+LABEL_REPLACEMENTS = {
+    "Pepper__bell___Bacterial_spot": "Pepper Bell - Bacterial Spot",
+    "Pepper__bell___healthy": "Pepper Bell - Healthy",
+    "Potato___Early_blight": "Potato - Early Blight",
+    "Potato___Late_blight": "Potato - Late Blight",
+    "Potato___healthy": "Potato - Healthy",
+    "Tomato_Bacterial_spot": "Tomato - Bacterial Spot",
+    "Tomato_Early_blight": "Tomato - Early Blight",
+    "Tomato_Late_blight": "Tomato - Late Blight",
+    "Tomato_Leaf_Mold": "Tomato - Leaf Mold",
+    "Tomato_Septoria_leaf_spot": "Tomato - Septoria Leaf Spot",
+    "Tomato_Spider_mites_Two_spotted_spider_mite": "Tomato - Spider Mites",
+    "Tomato__Target_Spot": "Tomato - Target Spot",
+    "Tomato__Tomato_YellowLeaf__Curl_Virus": "Tomato - Yellow Leaf Curl Virus",
+    "Tomato__Tomato_mosaic_virus": "Tomato - Mosaic Virus",
+    "Tomato_healthy": "Tomato - Healthy",
+}
+
+
+# ============================================================
 # Load classes
 # ============================================================
+
+def readable_label(label: str) -> str:
+    return LABEL_REPLACEMENTS.get(label, label.replace("_", " "))
+
 
 with open(CLASSES_PATH, "r", encoding="utf-8") as f:
     classes_data = json.load(f)
 
-
 if isinstance(classes_data, list):
-
     CLASS_NAMES = classes_data
-
 elif isinstance(classes_data, dict) and "classes" in classes_data:
-
     CLASS_NAMES = classes_data["classes"]
-
 elif isinstance(classes_data, dict) and "class_names" in classes_data:
-
     CLASS_NAMES = classes_data["class_names"]
-
 elif isinstance(classes_data, dict) and "class_to_idx" in classes_data:
-
     CLASS_NAMES = [
         name
         for name, index in sorted(
@@ -48,13 +70,10 @@ elif isinstance(classes_data, dict) and "class_to_idx" in classes_data:
             key=lambda x: x[1]
         )
     ]
-
 else:
+    raise ValueError("Unsupported classes.json format.")
 
-    raise ValueError(
-        "Unsupported classes.json format."
-    )
-
+READABLE_CLASS_NAMES = [readable_label(name) for name in CLASS_NAMES]
 
 print("=" * 60)
 print("AgriAI Vision v001")
@@ -63,11 +82,15 @@ print("Classes:", len(CLASS_NAMES))
 
 
 # ============================================================
-# Load ONNX model
+# Load ONNX model with session options
 # ============================================================
+
+session_options = ort.SessionOptions()
+session_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
 
 session = ort.InferenceSession(
     str(MODEL_PATH),
+    sess_options=session_options,
     providers=["CPUExecutionProvider"]
 )
 
@@ -79,109 +102,16 @@ print("Model loaded successfully.")
 
 
 # ============================================================
-# Readable class names
-# ============================================================
-
-def readable_label(label):
-
-    replacements = {
-
-        "Pepper__bell___Bacterial_spot":
-            "Pepper Bell - Bacterial Spot",
-
-        "Pepper__bell___healthy":
-            "Pepper Bell - Healthy",
-
-        "Potato___Early_blight":
-            "Potato - Early Blight",
-
-        "Potato___Late_blight":
-            "Potato - Late Blight",
-
-        "Potato___healthy":
-            "Potato - Healthy",
-
-        "Tomato_Bacterial_spot":
-            "Tomato - Bacterial Spot",
-
-        "Tomato_Early_blight":
-            "Tomato - Early Blight",
-
-        "Tomato_Late_blight":
-            "Tomato - Late Blight",
-
-        "Tomato_Leaf_Mold":
-            "Tomato - Leaf Mold",
-
-        "Tomato_Septoria_leaf_spot":
-            "Tomato - Septoria Leaf Spot",
-
-        "Tomato_Spider_mites_Two_spotted_spider_mite":
-            "Tomato - Spider Mites",
-
-        "Tomato__Target_Spot":
-            "Tomato - Target Spot",
-
-        "Tomato__Tomato_YellowLeaf__Curl_Virus":
-            "Tomato - Yellow Leaf Curl Virus",
-
-        "Tomato__Tomato_mosaic_virus":
-            "Tomato - Mosaic Virus",
-
-        "Tomato_healthy":
-            "Tomato - Healthy",
-    }
-
-    return replacements.get(
-        label,
-        label.replace("_", " ")
-    )
-
-
-# ============================================================
 # Image preprocessing
 # Exact preprocessing used by the trained model
 # ============================================================
 
-def preprocess(image):
-
-    image = image.convert("RGB")
-
-    image = image.resize(
-        (224, 224),
-        Image.Resampling.BILINEAR
-    )
-
-    image_array = np.asarray(
-        image,
-        dtype=np.float32
-    ) / 255.0
-
-    mean = np.array(
-        [0.485, 0.456, 0.406],
-        dtype=np.float32
-    )
-
-    std = np.array(
-        [0.229, 0.224, 0.225],
-        dtype=np.float32
-    )
-
-    image_array = (
-        image_array - mean
-    ) / std
-
-    image_array = np.transpose(
-        image_array,
-        (2, 0, 1)
-    )
-
-    image_array = np.expand_dims(
-        image_array,
-        axis=0
-    ).astype(np.float32)
-
-    return image_array
+def preprocess(image: Image.Image) -> np.ndarray:
+    image = image.convert("RGB").resize((224, 224), Image.Resampling.BILINEAR)
+    image_array = np.asarray(image, dtype=np.float32) * np.float32(1.0 / 255.0)
+    image_array = np.transpose(image_array, (2, 0, 1))
+    image_array = np.expand_dims(image_array, axis=0)
+    return (image_array - MEAN) / STD
 
 
 # ============================================================
@@ -189,9 +119,7 @@ def preprocess(image):
 # ============================================================
 
 def predict(image):
-
     if image is None:
-
         return (
             "## Please upload a plant leaf image.",
             {}
@@ -201,65 +129,38 @@ def predict(image):
 
     outputs = session.run(
         None,
-        {
-            INPUT_NAME: input_tensor
-        }
+        {INPUT_NAME: input_tensor}
     )
 
     logits = outputs[0][0]
 
     # Stable softmax
-    logits = (
-        logits -
-        np.max(logits)
-    )
+    logits = logits - np.max(logits)
+    exp_logits = np.exp(logits)
+    probabilities = exp_logits / np.sum(exp_logits)
 
-    probabilities = (
-        np.exp(logits) /
-        np.sum(np.exp(logits))
-    )
+    top_indices = np.argsort(probabilities)[::-1][:3]
 
-    top_indices = np.argsort(
-        probabilities
-    )[::-1][:3]
-
-
-    results = {}
-
-    for index in top_indices:
-
-        results[
-            readable_label(
-                CLASS_NAMES[index]
-            )
-        ] = float(
-            probabilities[index]
-        )
-
+    results = {
+        READABLE_CLASS_NAMES[index]: float(probabilities[index])
+        for index in top_indices
+    }
 
     best_index = top_indices[0]
-
-    best_probability = float(
-        probabilities[best_index]
-    )
-
-    best_class = readable_label(
-        CLASS_NAMES[best_index]
-    )
-
+    best_probability = float(probabilities[best_index])
+    best_class = READABLE_CLASS_NAMES[best_index]
 
     if best_probability >= 0.60:
-
         status = "HIGH CONFIDENCE"
-
     elif best_probability >= 0.40:
-
         status = "MODERATE CONFIDENCE"
-
     else:
-
         status = "LOW CONFIDENCE"
 
+    top_predictions_str = "".join([
+        f"{rank}. **{READABLE_CLASS_NAMES[idx]}** • {probabilities[idx] * 100:.2f}%\n"
+        for rank, idx in enumerate(top_indices, start=1)
+    ])
 
     report = f"""
 # 🌱 AgriAI Analysis
@@ -278,29 +179,7 @@ def predict(image):
 
 ## Top 3 Predictions
 
-"""
-
-
-    for rank, index in enumerate(
-        top_indices,
-        start=1
-    ):
-
-        label = readable_label(
-            CLASS_NAMES[index]
-        )
-
-        confidence = (
-            probabilities[index] * 100
-        )
-
-        report += (
-            f"{rank}. **{label}** "
-            f"• {confidence:.2f}%\n"
-        )
-
-
-    report += """
+{top_predictions_str}
 
 ---
 
@@ -365,7 +244,6 @@ to ONNX for lightweight CPU inference.
 """
     )
 
-
     with gr.Row():
 
         with gr.Column():
@@ -384,7 +262,6 @@ to ONNX for lightweight CPU inference.
                 variant="primary"
             )
 
-
         with gr.Column():
 
             report_output = gr.Markdown(
@@ -396,7 +273,6 @@ to ONNX for lightweight CPU inference.
                 label="Top Predictions"
             )
 
-
     analyze_button.click(
         fn=predict,
         inputs=image_input,
@@ -405,7 +281,6 @@ to ONNX for lightweight CPU inference.
             predictions_output
         ]
     )
-
 
     gr.Markdown(
         """
